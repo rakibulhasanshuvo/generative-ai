@@ -70,8 +70,8 @@ if not DEFAULT_PROJECT_ID:
         _, project = google.auth.default()
         if project:
             DEFAULT_PROJECT_ID = project
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Could not automatically determine Google Cloud project: {e}")
 
 VEO_MODEL_ID = "veo-3.1-generate-001"
 GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview"
@@ -246,8 +246,8 @@ class SessionBridge:
             try:
                 self.queue.get_nowait()
                 self.queue.put_nowait(item)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"Error managing bridge queue: {e}")
 
 
 async def run_live_session(session_id, sid):
@@ -613,8 +613,8 @@ async def run_live_session(session_id, sid):
                             should_reconnect = True
                         elif result == "ended" and session_active:
                             should_reconnect = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.error(f"Error getting task result: {e}")
 
                 for task in pending:
                     task.cancel()
@@ -1088,8 +1088,8 @@ def handle_image_generation(args, session_id):
                     content_parts.append(
                         {"inline_data": {"mime_type": "image/png", "data": b}}
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.error(f"Error decoding reference image: {e}")
 
         if content_parts:
             content_parts.append(f"Based on the reference image(s), create: {prompt}")
