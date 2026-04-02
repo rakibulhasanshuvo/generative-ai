@@ -478,10 +478,28 @@ class MemoryAgent:
 # ─── File Watcher ──────────────────────────────────────────────
 
 
+def _check_file_processed(path: str) -> bool:
+    """Check if a file has already been processed (synchronous)."""
+    db = get_db()
+    row = db.execute("SELECT 1 FROM processed_files WHERE path = ?", (path,)).fetchone()
+    db.close()
+    return bool(row)
+
+
+def _mark_file_processed(path: str):
+    """Mark a file as processed in the database (synchronous)."""
+    db = get_db()
+    db.execute(
+        "INSERT INTO processed_files (path, processed_at) VALUES (?, ?)",
+        (path, datetime.now(timezone.utc).isoformat()),
+    )
+    db.commit()
+    db.close()
+
+
 async def watch_folder(agent: MemoryAgent, folder: Path, poll_interval: int = 5):
     """Watch a folder for new files and ingest them (text, images, audio, video, PDFs)."""
     folder.mkdir(parents=True, exist_ok=True)
-    db = get_db()
     log.info(f"👁️  Watching: {folder}/  (supports: text, images, audio, video, PDFs)")
 
     while True:
@@ -492,8 +510,8 @@ async def watch_folder(agent: MemoryAgent, folder: Path, poll_interval: int = 5)
                 suffix = f.suffix.lower()
                 if suffix not in ALL_SUPPORTED:
                     continue
-                row = db.execute("SELECT 1 FROM processed_files WHERE path = ?", (str(f),)).fetchone()
-                if row:
+
+                if await asyncio.to_thread(_check_file_processed, str(f)):
                     continue
 
                 try:
@@ -510,11 +528,7 @@ async def watch_folder(agent: MemoryAgent, folder: Path, poll_interval: int = 5)
                 except Exception as file_err:
                     log.error(f"Error ingesting {f.name}: {file_err}")
 
-                db.execute(
-                    "INSERT INTO processed_files (path, processed_at) VALUES (?, ?)",
-                    (str(f), datetime.now(timezone.utc).isoformat()),
-                )
-                db.commit()
+                await asyncio.to_thread(_mark_file_processed, str(f))
         except Exception as e:
             log.error(f"Watch error: {e}")
 
@@ -530,9 +544,8 @@ async def consolidation_loop(agent: MemoryAgent, interval_minutes: int = 30):
     while True:
         await asyncio.sleep(interval_minutes * 60)
         try:
-            db = get_db()
-            count = db.execute("SELECT COUNT(*) as c FROM memories WHERE consolidated = 0").fetchone()["c"]
-            db.close()
+            stats = await asyncio.to_thread(get_memory_stats)
+            count = stats.get("unconsolidated", 0)
             if count >= 2:
                 log.info(f"🔄 Running consolidation ({count} unconsolidated memories)...")
                 result = await agent.consolidate()
@@ -573,11 +586,11 @@ def build_http(agent: MemoryAgent, watch_path: str = "./inbox"):
         return web.json_response({"status": "done", "response": result})
 
     async def handle_status(request: web.Request):
-        stats = get_memory_stats()
+        stats = await asyncio.to_thread(get_memory_stats)
         return web.json_response(stats)
 
     async def handle_memories(request: web.Request):
-        data = read_all_memories()
+        data = await asyncio.to_thread(read_all_memories)
         return web.json_response(data)
 
     async def handle_delete(request: web.Request):
@@ -588,11 +601,11 @@ def build_http(agent: MemoryAgent, watch_path: str = "./inbox"):
         memory_id = data.get("memory_id")
         if not memory_id:
             return web.json_response({"error": "missing 'memory_id' field"}, status=400)
-        result = delete_memory(int(memory_id))
+        result = await asyncio.to_thread(delete_memory, int(memory_id))
         return web.json_response(result)
 
     async def handle_clear(request: web.Request):
-        result = clear_all_memories(inbox_path=watch_path)
+        result = await asyncio.to_thread(clear_all_memories, inbox_path=watch_path)
         return web.json_response(result)
 
     app.router.add_get("/query", handle_query)
