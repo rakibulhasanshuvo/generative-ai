@@ -680,10 +680,11 @@ class AgentEvaluator:
                         # Extract all metrics from the row
                         metrics = {}
                         for col in eval_result.metrics_table.columns:
-                            if "score" in col.lower() and isinstance(
-                                row[col], (int, float)
-                            ):
-                                metrics[col] = float(row[col])
+                            if "score" in col.lower():
+                                if isinstance(row[col], (int, float)):
+                                    metrics[col] = float(row[col])
+                                elif isinstance(row[col], dict):
+                                    metrics[col] = row[col]
 
                         metrics_lookup[example_id] = metrics
 
